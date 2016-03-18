@@ -47,7 +47,7 @@ CURRENT_DIR = os.path.dirname(sys.argv[0])
 CPU_COMPILER = ('/usr/bin/gcc')
 NVCC_PATH = CURRENT_DIR + '/../../../cuda/bin/nvcc'
 GCC_HOST_COMPILER_PATH = ('/usr/bin/gcc')
-LLVM_HOST_COMPILER_PATH = ('/usr/bin/gcc')
+LLVM_HOST_COMPILER_PATH = os.path.join(CURRENT_DIR, 'clang++')
 PREFIX_DIR = os.path.dirname(GCC_HOST_COMPILER_PATH)
 
 
@@ -194,6 +194,58 @@ def InvokeGcudacc(argv, gcudacc_version, gcudacc_flags, log=False):
   return os.system(gcudacc_cmd)
 
 
+def InvokeClang(argv, cuda_compilation, clang_flags, log=False):
+  """Call clang with arguments assembled from argv.
+
+  Args:
+    argv: A list of strings, possibly the argv passed to main().
+    clang_flags: A list of extra arguments passed just for clang.
+    log: True if logging is requested.
+
+  Returns:
+    The return value of calling os.system('clangcmd ' + args)
+  """
+
+  # filter out unwanted gcc options supplied by CROSSTOOL
+  parser = ArgumentParser()
+  parser.add_argument('-fno-canonical-system-headers', action='store_true')
+  parser.add_argument('-no-canonical-prefixes', action='store_true')
+  parser.add_argument('-fstack-protector', action='store_true')
+  #parser.add_argument('-isystem-internal', nargs='*', action='store')
+  parser.add_argument('--cuda_log', action='store_true')
+  parser.add_argument('--use_clang', action='store_true')
+  parser.add_argument('--clang_flag', nargs='*', action='append', default=[])
+  parser.add_argument('--use_gcudacc', action='store_true')
+  parser.add_argument('--gcudacc_version', action='store', default='v8')
+  parser.add_argument('--gcudacc_flag', nargs='*', action='append', default=[])
+  unwanted_args, compiler_flags = parser.parse_known_args(argv)
+  # Unofficial setting. DO NOT SUBMIT!!!
+  # Unofficial setting. DO NOT SUBMIT!!!
+  supported_cuda_compute_capabilities = ["3.5",]
+
+  gpu_opts=''
+  for capability in supported_cuda_compute_capabilities:
+    capability = capability.replace('.', '')
+    gpu_opts += r' --cuda-gpu-arch=sm_%s' % capability
+
+  clang_cmd = LLVM_HOST_COMPILER_PATH
+  if cuda_compilation:
+    clang_cmd = (
+        clang_cmd +
+        ' -x cuda' +
+        gpu_opts)
+
+  clang_cmd = (
+      clang_cmd +
+      ' -Wno-unknown-warning-option' +
+      #' --cuda-relaxed-constexpr' +
+      ' '.join(sum(clang_flags, [])) + ' ' +
+      ' '.join(StripAndTransformNvccOptions(compiler_flags)))
+  if log: Log(clang_cmd)
+  #print(clang_cmd)
+  return os.system(clang_cmd)
+
+
 def InvokeNvcc(argv, log=False):
   """Call nvcc with arguments assembled from argv.
 
@@ -292,12 +344,22 @@ def main():
   parser = ArgumentParser()
   parser.add_argument('-x', nargs=1)
   parser.add_argument('--cuda_log', action='store_true')
+  parser.add_argument('--use_clang', action='store_true')
+  parser.add_argument('--clang_flag', nargs='*', action='append', default=[])
   parser.add_argument('--use_gcudacc', action='store_true')
   parser.add_argument('--gcudacc_version', action='store', default='v8')
   parser.add_argument('--gcudacc_flag', nargs='*', action='append', default=[])
+  # Hack that relies on -c preceeding source name
+  parser.add_argument('-c', nargs=1)
   args, leftover = parser.parse_known_args(sys.argv[1:])
 
-  if args.x and args.x[0] == 'cuda':
+  cuda_compilation = (args.x and args.x[0] == 'cuda')
+  tensorflow_core = args.c and args.c[0].startswith('tensorflow/core')
+  if args.c:
+    leftover.append('-c')
+    leftover += args.c
+
+  if cuda_compilation or (args.use_clang and tensorflow_core):
     if args.cuda_log: Log('-x cuda')
     leftover = [pipes.quote(s) for s in leftover]
     if args.use_gcudacc:
@@ -306,6 +368,11 @@ def main():
                            gcudacc_version=args.gcudacc_version,
                            gcudacc_flags=args.gcudacc_flag,
                            log=args.cuda_log)
+    if args.use_clang:
+      if args.cuda_log: Log('using clang')
+      return InvokeClang(leftover, cuda_compilation,
+                         clang_flags=args.clang_flag,
+                         log=args.cuda_log)
     if args.cuda_log: Log('using nvcc')
     return InvokeNvcc(leftover, log=args.cuda_log)
 
@@ -316,6 +383,8 @@ def main():
   # this).
   cpu_compiler_flags = [flag for flag in sys.argv[1:]
                              if not flag.startswith(('--cuda_log',
+                                                     '--use_clang',
+                                                     '--clang_flag',
                                                      '--use_gcudacc',
                                                      '--gcudacc_version',
                                                      '--gcudacc_flag'))]
