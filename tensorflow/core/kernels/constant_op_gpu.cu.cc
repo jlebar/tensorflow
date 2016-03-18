@@ -92,6 +92,7 @@ struct SetZeroFunctor<GPUDevice, T> {
 };
 
 #define DEFINE_SETZERO_GPU(T) template struct SetZeroFunctor<GPUDevice, T>
+DEFINE_SETZERO_GPU(bool);
 DEFINE_SETZERO_GPU(float);
 DEFINE_SETZERO_GPU(double);
 #undef DEFINE_SETZERO_GPU
